@@ -122,7 +122,11 @@ class TrustHive_Reviews_Admin
         if (isset($_GET['provisioned']) && $_GET['provisioned'] === '1') {
             echo '<div class="updated notice is-dismissible"><p>' . esc_html__('Shop provisioned and credentials saved.', 'trusthive-reviews') . '</p></div>';
         } elseif (isset($_GET['provision_error'])) {
-            echo '<div class="error notice is-dismissible"><p>' . esc_html__('Provisioning failed: ', 'trusthive-reviews') . esc_html($_GET['provision_error']) . '</p></div>';
+            if ($_GET['provision_error'] === 'already_provisioned') {
+                echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__('Shop is already provisioned. Duplicate provisioning was prevented.', 'trusthive-reviews') . '</p></div>';
+            } else {
+                echo '<div class="error notice is-dismissible"><p>' . esc_html__('Provisioning failed: ', 'trusthive-reviews') . esc_html($_GET['provision_error']) . '</p></div>';
+            }
         }
 
         ?>
@@ -145,14 +149,18 @@ class TrustHive_Reviews_Admin
             <?php endif; ?>
 
             <?php if (defined('TRUSTHIVE_REVIEWS_SITE_URL') && TRUSTHIVE_REVIEWS_SITE_URL) : ?>
-                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
-                    <?php wp_nonce_field('trusthive_provision_action', 'trusthive_provision_nonce'); ?>
-                    <input type="hidden" name="action" value="trusthive_provision" />
-                    <p>
-                        <button class="button" type="submit"><?php echo esc_html__('Provision shop on dashboard', 'trusthive-reviews'); ?></button>
-                        <span class="description"><?php echo esc_html__('Creates a shop account on your configured dashboard and saves the returned shop id and API key.', 'trusthive-reviews'); ?></span>
-                    </p>
-                </form>
+                <?php if (empty($settings['shop_id'])) : ?>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                        <?php wp_nonce_field('trusthive_provision_action', 'trusthive_provision_nonce'); ?>
+                        <input type="hidden" name="action" value="trusthive_provision" />
+                        <p>
+                            <button class="button" type="submit"><?php echo esc_html__('Provision shop on dashboard', 'trusthive-reviews'); ?></button>
+                            <span class="description"><?php echo esc_html__('Creates a shop account on your configured dashboard and saves the returned shop id and API key.', 'trusthive-reviews'); ?></span>
+                        </p>
+                    </form>
+                <?php else: ?>
+                    <p><strong><?php echo esc_html__('Shop already provisioned:', 'trusthive-reviews'); ?></strong> <?php echo esc_html($settings['shop_id']); ?></p>
+                <?php endif; ?>
             <?php endif; ?>
         </div>
         <?php
@@ -171,6 +179,12 @@ class TrustHive_Reviews_Admin
         $settings = $this->get_settings();
         // Use the hardcoded site URL for provisioning.
         $dashboard = rtrim(defined('TRUSTHIVE_REVIEWS_SITE_URL') ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/');
+        // Prevent duplicate provisioning for the same WordPress site.
+        if (!empty($settings['shop_id'])) {
+            $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => 'already_provisioned'], admin_url('admin.php'));
+            wp_redirect($url);
+            exit;
+        }
         if (empty($dashboard)) {
             $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => 'missing_dashboard_url'], admin_url('admin.php'));
             wp_redirect($url);
