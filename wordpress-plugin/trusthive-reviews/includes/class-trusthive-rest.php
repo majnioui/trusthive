@@ -49,7 +49,14 @@ class TrustHive_Reviews_REST
 
     public function handle_review(WP_REST_Request $request)
     {
-        $product_id   = absint($request->get_param('product_id'));
+        try {
+            // Validate nonce if present
+            $nonce = isset($_SERVER['HTTP_X_WP_NONCE']) ? $_SERVER['HTTP_X_WP_NONCE'] : '';
+            if ($nonce && !wp_verify_nonce($nonce, 'wp_rest')) {
+                return new WP_Error('invalid_nonce', __('Invalid or missing nonce', 'trusthive-reviews'), ['status' => 403]);
+            }
+
+            $product_id   = absint($request->get_param('product_id'));
         $author_name  = sanitize_text_field($request->get_param('author_name'));
         $author_email = sanitize_email($request->get_param('author_email'));
         $rating       = absint($request->get_param('rating'));
@@ -60,8 +67,7 @@ class TrustHive_Reviews_REST
             return new WP_Error('invalid_rating', __('Rating must be between 1 and 5', 'trusthive-reviews'), ['status' => 400]);
         }
 
-        $admin = new TrustHive_Reviews_Admin();
-        $settings = $admin->get_settings();
+        $settings = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
         // Use the hardcoded TrustHive site URL and append the API path.
         $api_base = rtrim(defined('TRUSTHIVE_REVIEWS_SITE_URL') ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/') . '/api';
         $shop_id  = isset($settings['shop_id']) ? $settings['shop_id'] : '';
@@ -92,7 +98,16 @@ class TrustHive_Reviews_REST
             'comment_approved'     => 0,
         ];
 
+        // Try to insert the comment locally. If it fails, try once more using wp_slash
+        // and record a transient so admins can debug later.
         $comment_id = wp_insert_comment($comment_data);
+        if (!($comment_id && !is_wp_error($comment_id))) {
+            // log and retry with slashed data
+            error_log('TrustHive: wp_insert_comment initial attempt failed for product_id=' . intval($product_id));
+            $slashed = wp_slash($comment_data);
+            $comment_id = wp_insert_comment($slashed);
+        }
+
         if ($comment_id && !is_wp_error($comment_id)) {
             add_comment_meta($comment_id, 'trusthive_shop_id', $shop_id, true);
             add_comment_meta($comment_id, 'trusthive_rating', $rating, true);
@@ -101,6 +116,10 @@ class TrustHive_Reviews_REST
             }
             add_comment_meta($comment_id, 'trusthive_source', get_bloginfo('name'), true);
             add_comment_meta($comment_id, 'trusthive_site_url', site_url(), true);
+        } else {
+            $err_msg = 'Failed to save review locally for product_id=' . intval($product_id);
+            error_log('TrustHive: ' . $err_msg);
+            set_transient('trusthive_local_save_error', $err_msg, 60*60);
         }
 
         $args = [ 'headers' => [ 'Content-Type' => 'application/json' ], 'body' => wp_json_encode($payload), 'timeout' => 15 ];
@@ -111,15 +130,21 @@ class TrustHive_Reviews_REST
         $url = $api_base . '/reviews';
         $resp = wp_remote_post($url, $args);
         if (is_wp_error($resp)) {
+            error_log('TrustHive remote error: ' . $resp->get_error_message());
             return new WP_Error('remote_error', $resp->get_error_message(), ['status' => 500]);
         }
         $code = wp_remote_retrieve_response_code($resp);
         $body = wp_remote_retrieve_body($resp);
         if ($code < 200 || $code >= 300) {
+            error_log('TrustHive upstream error (' . $code . '): ' . $body);
             return new WP_Error('remote_error', sprintf(__('Upstream error (%d): %s', 'trusthive-reviews'), $code, $body), ['status' => 500]);
         }
 
         return new WP_REST_Response([ 'ok' => true ], 200);
+        } catch (Exception $e) {
+            error_log('TrustHive handle_review exception: ' . $e->getMessage() . " in " . $e->getFile() . ':' . $e->getLine());
+            return new WP_Error('internal_error', __('Internal server error', 'trusthive-reviews'), ['status' => 500]);
+        }
     }
 
     private function verify_sso_token($shop, $ts, $token, $secret, $max_age = 300)
@@ -144,8 +169,7 @@ class TrustHive_Reviews_REST
         $ts = isset($params['ts']) ? $params['ts'] : '';
         $token = isset($params['token']) ? $params['token'] : '';
 
-        $admin = new TrustHive_Reviews_Admin();
-        $settings = $admin->get_settings();
+        $settings = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
         $secret = isset($settings['api_key']) ? $settings['api_key'] : '';
 
         if (!$this->verify_sso_token($shop, $ts, $token, $secret)) {
@@ -189,8 +213,7 @@ class TrustHive_Reviews_REST
         $ts = isset($params['ts']) ? $params['ts'] : (isset($body['ts']) ? $body['ts'] : '');
         $token = isset($params['token']) ? $params['token'] : (isset($body['token']) ? $body['token'] : '');
 
-        $admin = new TrustHive_Reviews_Admin();
-        $settings = $admin->get_settings();
+        $settings = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
         $secret = isset($settings['api_key']) ? $settings['api_key'] : '';
         if (!$this->verify_sso_token($shop, $ts, $token, $secret)) {
             return new WP_Error('unauthorized', __('Invalid token', 'trusthive-reviews'), ['status' => 401]);

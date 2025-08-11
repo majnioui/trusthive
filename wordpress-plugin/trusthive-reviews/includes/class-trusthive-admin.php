@@ -69,6 +69,20 @@ class TrustHive_Reviews_Admin
         ];
     }
 
+    // Mask a secret for display (show first/last chars)
+    private function mask_value($val, $start = 4, $end = 4)
+    {
+        if (empty($val)) {
+            return '';
+        }
+        $len = strlen($val);
+        if ($len <= ($start + $end)) {
+            return str_repeat('*', $len);
+        }
+        return substr($val, 0, $start) . str_repeat('*', max(3, $len - $start - $end)) . substr($val, -$end);
+    }
+
+
     // encryption helpers removed — API key stored directly in DB unless defined in wp-config.php
 
 
@@ -146,6 +160,18 @@ class TrustHive_Reviews_Admin
                     <span class="description"><?php echo esc_html__('Registers your site on the TrustHive dashboard or syncs credentials. Only use overwrite if you know what you are doing.', 'trusthive-reviews'); ?></span>
                 </p>
             </form>
+
+            <h2><?php echo esc_html__('Diagnostics', 'trusthive-reviews'); ?></h2>
+            <div class="trusthive-diagnostics" style="border:1px solid #ddd;padding:12px;margin-top:12px;background:#fff;">
+                <p><strong><?php echo esc_html__('Shop ID', 'trusthive-reviews'); ?>:</strong> <?php echo esc_html($settings['shop_id'] ? $settings['shop_id'] : __('(not set)', 'trusthive-reviews')); ?></p>
+                <p><strong><?php echo esc_html__('API Key (masked)', 'trusthive-reviews'); ?>:</strong> <?php echo esc_html($this->mask_value($settings['api_key'])); ?></p>
+                <?php $reg_err = get_transient('trusthive_register_error'); if ($reg_err): ?>
+                    <p style="color:#c00;"><strong><?php echo esc_html__('Last registration error', 'trusthive-reviews'); ?>:</strong> <?php echo esc_html($reg_err); ?></p>
+                <?php endif; ?>
+                <?php $local_err = get_transient('trusthive_local_save_error'); if ($local_err): ?>
+                    <p style="color:#c00;"><strong><?php echo esc_html__('Last local save error', 'trusthive-reviews'); ?>:</strong> <?php echo esc_html($local_err); ?></p>
+                <?php endif; ?>
+            </div>
 
         </div>
         <?php
