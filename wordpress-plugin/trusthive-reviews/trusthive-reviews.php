@@ -37,3 +37,85 @@ add_filter('plugin_action_links_' . plugin_basename(__FILE__), function ($links)
     array_unshift($links, $settings_link);
     return $links;
 });
+
+
+/**
+ * Activation hook: ensure credentials are generated once on activation.
+ */
+function trusthive_reviews_activate()
+{
+    $opt_name = TrustHive_Reviews_Admin::OPTION_NAME;
+    $settings = get_option($opt_name, []);
+    if (!is_array($settings)) {
+        $settings = [];
+    }
+
+    $updated = false;
+    if (empty($settings['shop_id'])) {
+        if (function_exists('wp_generate_uuid4')) {
+            $settings['shop_id'] = wp_generate_uuid4();
+        } else {
+            $settings['shop_id'] = uniqid('shop_', true);
+        }
+        $updated = true;
+    }
+
+    if (empty($settings['api_key'])) {
+        if (function_exists('wp_generate_password')) {
+            $settings['api_key'] = wp_generate_password(48, true, true);
+        } elseif (function_exists('random_bytes')) {
+            $settings['api_key'] = bin2hex(random_bytes(24));
+        } elseif (function_exists('openssl_random_pseudo_bytes')) {
+            $settings['api_key'] = bin2hex(openssl_random_pseudo_bytes(24));
+        } else {
+            $settings['api_key'] = uniqid('key_', true);
+        }
+        $updated = true;
+    }
+
+    // Attempt to register on the external dashboard to create a canonical shop record,
+    // but only if we don't already have a shop_id (prevents duplicate remote records).
+    $dashboard = rtrim(defined('TRUSTHIVE_REVIEWS_SITE_URL') ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/');
+    $registered = false;
+    if (empty($settings['shop_id']) && !empty($dashboard)) {
+        $payload = [
+            'site_url' => get_site_url(),
+            'site_name' => get_bloginfo('name'),
+            'admin_email' => get_option('admin_email'),
+        ];
+        $args = [
+            'headers' => [ 'Content-Type' => 'application/json' ],
+            'body' => wp_json_encode($payload),
+            'timeout' => 20,
+        ];
+        // Use wp_remote_post if available (in WP activation context it should be).
+        if (function_exists('wp_remote_post')) {
+            $resp = wp_remote_post($dashboard . '/api/register', $args);
+            if (!is_wp_error($resp)) {
+                $code = wp_remote_retrieve_response_code($resp);
+                $body = wp_remote_retrieve_body($resp);
+                $data = json_decode($body, true);
+                if ($code >= 200 && $code < 300 && !empty($data) && !empty($data['ok'])) {
+                    if (!empty($data['shop_id'])) {
+                        $settings['shop_id'] = sanitize_text_field($data['shop_id']);
+                    }
+                    if (!empty($data['api_key'])) {
+                        $settings['api_key'] = sanitize_text_field($data['api_key']);
+                    }
+                    $registered = true;
+                } else {
+                    # store transient for admin to see the error
+                    set_transient('trusthive_register_error', isset($data['error']) ? $data['error'] : $body, 60*60);
+                }
+            } else {
+                set_transient('trusthive_register_error', $resp->get_error_message(), 60*60);
+            }
+        }
+    }
+
+    if ($updated || $registered) {
+        update_option($opt_name, $settings);
+    }
+}
+
+register_activation_hook(__FILE__, 'trusthive_reviews_activate');
