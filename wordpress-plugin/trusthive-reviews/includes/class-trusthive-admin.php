@@ -53,8 +53,7 @@ class TrustHive_Reviews_Admin
             self::OPTION_GROUP
         );
 
-        add_settings_field('api_base_url', __('API Base URL', 'trusthive-reviews'), [$this, 'field_api_base_url'], self::OPTION_GROUP, 'trusthive_reviews_main');
-        add_settings_field('dashboard_url', __('Dashboard URL', 'trusthive-reviews'), [$this, 'field_dashboard_url'], self::OPTION_GROUP, 'trusthive_reviews_main');
+        // API and dashboard URLs are now hardcoded; expose only shop_id and api_key.
         add_settings_field('shop_id', __('Shop ID', 'trusthive-reviews'), [$this, 'field_shop_id'], self::OPTION_GROUP, 'trusthive_reviews_main');
         add_settings_field('api_key', __('API Key (Bearer)', 'trusthive-reviews'), [$this, 'field_api_key'], self::OPTION_GROUP, 'trusthive_reviews_main');
     }
@@ -100,16 +99,14 @@ class TrustHive_Reviews_Admin
 
         $settings = $this->get_settings();
         $dashboard_link = '';
-        if (!empty($settings['dashboard_url'])) {
+        // Dashboard and API host are hardcoded to the configured site URL constant.
+        if (defined('TRUSTHIVE_REVIEWS_SITE_URL') && TRUSTHIVE_REVIEWS_SITE_URL) {
             // Build a short-lived HMAC token so the owner can open the external dashboard
-            // without re-authenticating. The external app (hosted on your server) should
-            // verify `shop`, `ts` and `token` using the shared `api_key` as secret.
+            // without re-authenticating. The external app should verify `shop`, `ts` and
+            // `token` using the shared `api_key` as secret.
             $shop_value = $settings['shop_id'] ?: site_url();
-            $args = [
-                'shop' => rawurlencode($shop_value),
-            ];
+            $args = [ 'shop' => rawurlencode($shop_value) ];
 
-            // If an API key is provided, attach an HMAC token and timestamp for SSO.
             if (!empty($settings['api_key'])) {
                 $ts = time();
                 $token_payload = $shop_value . '|' . $ts;
@@ -118,7 +115,7 @@ class TrustHive_Reviews_Admin
                 $args['token'] = $token;
             }
 
-            $dashboard_link = esc_url(add_query_arg($args, $settings['dashboard_url']));
+            $dashboard_link = esc_url(add_query_arg($args, rtrim(TRUSTHIVE_REVIEWS_SITE_URL, '/') . '/dashboard'));
         }
 
         // Show admin notice after provisioning (legacy flow uses query params)
@@ -147,7 +144,7 @@ class TrustHive_Reviews_Admin
                 </p>
             <?php endif; ?>
 
-            <?php if (!empty($settings['dashboard_url'])) : ?>
+            <?php if (defined('TRUSTHIVE_REVIEWS_SITE_URL') && TRUSTHIVE_REVIEWS_SITE_URL) : ?>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                     <?php wp_nonce_field('trusthive_provision_action', 'trusthive_provision_nonce'); ?>
                     <input type="hidden" name="action" value="trusthive_provision" />
@@ -172,7 +169,8 @@ class TrustHive_Reviews_Admin
         }
 
         $settings = $this->get_settings();
-        $dashboard = rtrim($settings['dashboard_url'], '/');
+        // Use the hardcoded site URL for provisioning.
+        $dashboard = rtrim(defined('TRUSTHIVE_REVIEWS_SITE_URL') ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/');
         if (empty($dashboard)) {
             $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => 'missing_dashboard_url'], admin_url('admin.php'));
             wp_redirect($url);

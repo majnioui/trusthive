@@ -62,12 +62,13 @@ class TrustHive_Reviews_REST
 
         $admin = new TrustHive_Reviews_Admin();
         $settings = $admin->get_settings();
-        $api_base = isset($settings['api_base_url']) ? rtrim($settings['api_base_url'], '/') : '';
+        // Use the hardcoded TrustHive site URL and append the API path.
+        $api_base = rtrim(defined('TRUSTHIVE_REVIEWS_SITE_URL') ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/') . '/api';
         $shop_id  = isset($settings['shop_id']) ? $settings['shop_id'] : '';
         $api_key  = isset($settings['api_key']) ? $settings['api_key'] : '';
 
-        if (empty($api_base) || empty($shop_id)) {
-            return new WP_Error('missing_config', __('Plugin not configured: set API Base URL and Shop ID.', 'trusthive-reviews'), ['status' => 400]);
+        if (empty($shop_id)) {
+            return new WP_Error('missing_config', __('Plugin not configured: set Shop ID.', 'trusthive-reviews'), ['status' => 400]);
         }
 
         $payload = [

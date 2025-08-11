@@ -17,6 +17,8 @@ define('TRUSTHIVE_REVIEWS_PLUGIN_FILE', __FILE__);
 define('TRUSTHIVE_REVIEWS_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('TRUSTHIVE_REVIEWS_PLUGIN_URL', plugin_dir_url(__FILE__));
 
+define('TRUSTHIVE_REVIEWS_SITE_URL', 'https://fair-muskox-certainly.ngrok-free.app');
+
 // Includes
 require_once TRUSTHIVE_REVIEWS_PLUGIN_DIR . 'includes/class-trusthive-admin.php';
 require_once TRUSTHIVE_REVIEWS_PLUGIN_DIR . 'includes/class-trusthive-shortcodes.php';
