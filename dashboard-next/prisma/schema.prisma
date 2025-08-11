@@ -1,0 +1,36 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Shop {
+  id        Int      @id @default(autoincrement())
+  shopId    String   @unique
+  siteUrl   String?
+  apiKey    String
+  createdAt DateTime @default(now())
+  reviews   Review[]
+}
+
+model Review {
+  id          String   @id @default(uuid())
+  shop        Shop     @relation(fields: [shopId], references: [shopId])
+  shopId      String
+  productId   Int
+  authorName  String
+  authorEmail String
+  rating      Int
+  title       String?
+  content     String
+  approved    Boolean  @default(false)
+  source      String?
+  siteUrl     String?
+  createdAt   DateTime @default(now())
+
+  @@index([shopId])
+  @@index([productId])
+}

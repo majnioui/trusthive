@@ -60,7 +60,8 @@ class TrustHive_Reviews_REST
             return new WP_Error('invalid_rating', __('Rating must be between 1 and 5', 'trusthive-reviews'), ['status' => 400]);
         }
 
-        $settings = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
+        $admin = new TrustHive_Reviews_Admin();
+        $settings = $admin->get_settings();
         $api_base = isset($settings['api_base_url']) ? rtrim($settings['api_base_url'], '/') : '';
         $shop_id  = isset($settings['shop_id']) ? $settings['shop_id'] : '';
         $api_key  = isset($settings['api_key']) ? $settings['api_key'] : '';
@@ -142,7 +143,8 @@ class TrustHive_Reviews_REST
         $ts = isset($params['ts']) ? $params['ts'] : '';
         $token = isset($params['token']) ? $params['token'] : '';
 
-        $settings = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
+        $admin = new TrustHive_Reviews_Admin();
+        $settings = $admin->get_settings();
         $secret = isset($settings['api_key']) ? $settings['api_key'] : '';
 
         if (!$this->verify_sso_token($shop, $ts, $token, $secret)) {
@@ -186,7 +188,8 @@ class TrustHive_Reviews_REST
         $ts = isset($params['ts']) ? $params['ts'] : (isset($body['ts']) ? $body['ts'] : '');
         $token = isset($params['token']) ? $params['token'] : (isset($body['token']) ? $body['token'] : '');
 
-        $settings = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
+        $admin = new TrustHive_Reviews_Admin();
+        $settings = $admin->get_settings();
         $secret = isset($settings['api_key']) ? $settings['api_key'] : '';
         if (!$this->verify_sso_token($shop, $ts, $token, $secret)) {
             return new WP_Error('unauthorized', __('Invalid token', 'trusthive-reviews'), ['status' => 401]);

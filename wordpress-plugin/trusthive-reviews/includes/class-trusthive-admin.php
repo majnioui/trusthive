@@ -13,17 +13,21 @@ class TrustHive_Reviews_Admin
     {
         add_action('admin_menu', [$this, 'register_menu']);
         add_action('admin_init', [$this, 'register_settings']);
+        // Manual provisioning endpoint (button in admin UI)
         add_action('admin_post_trusthive_provision', [$this, 'handle_provision']);
     }
 
     public function register_menu()
     {
-        add_options_page(
+        // Register a top-level admin menu for the plugin instead of a submenu under Settings
+        add_menu_page(
             __('TrustHive Reviews', 'trusthive-reviews'),
             __('TrustHive Reviews', 'trusthive-reviews'),
             'manage_options',
             'trusthive-reviews',
-            [$this, 'render_settings_page']
+            [$this, 'render_settings_page'],
+            'dashicons-star-filled',
+            57
         );
     }
 
@@ -69,15 +73,24 @@ class TrustHive_Reviews_Admin
         ]);
     }
 
+    // (no decrypted settings helper; plugin uses stored DB values)
+
     public function sanitize_settings($input)
     {
+        $existing = get_option(self::OPTION_NAME, []);
         return [
-            'api_base_url'  => isset($input['api_base_url']) ? esc_url_raw($input['api_base_url']) : '',
-            'dashboard_url' => isset($input['dashboard_url']) ? esc_url_raw($input['dashboard_url']) : '',
-            'shop_id'       => isset($input['shop_id']) ? sanitize_text_field($input['shop_id']) : '',
-            'api_key'       => isset($input['api_key']) ? sanitize_text_field($input['api_key']) : '',
+            'api_base_url'  => isset($input['api_base_url']) ? esc_url_raw($input['api_base_url']) : (isset($existing['api_base_url']) ? $existing['api_base_url'] : ''),
+            'dashboard_url' => isset($input['dashboard_url']) ? esc_url_raw($input['dashboard_url']) : (isset($existing['dashboard_url']) ? $existing['dashboard_url'] : ''),
+            // keep existing shop_id/api_key unless explicitly provided (we do not expose these fields in the UI)
+            'shop_id'       => isset($input['shop_id']) ? sanitize_text_field($input['shop_id']) : (isset($existing['shop_id']) ? $existing['shop_id'] : ''),
+            'api_key'       => isset($input['api_key']) ? sanitize_text_field($input['api_key']) : (isset($existing['api_key']) ? $existing['api_key'] : ''),
         ];
     }
+
+    // encryption helpers removed — API key stored directly in DB unless defined in wp-config.php
+
+    
+
 
     public function render_settings_page()
     {
@@ -108,7 +121,7 @@ class TrustHive_Reviews_Admin
             $dashboard_link = esc_url(add_query_arg($args, $settings['dashboard_url']));
         }
 
-        // Show admin notice after provisioning
+        // Show admin notice after provisioning (legacy flow uses query params)
         if (isset($_GET['provisioned']) && $_GET['provisioned'] === '1') {
             echo '<div class="updated notice is-dismissible"><p>' . esc_html__('Shop provisioned and credentials saved.', 'trusthive-reviews') . '</p></div>';
         } elseif (isset($_GET['provision_error'])) {
@@ -148,6 +161,7 @@ class TrustHive_Reviews_Admin
         <?php
     }
 
+    // Manual provisioning endpoint (triggered by admin form)
     public function handle_provision()
     {
         if (!current_user_can('manage_options')) {
@@ -160,7 +174,7 @@ class TrustHive_Reviews_Admin
         $settings = $this->get_settings();
         $dashboard = rtrim($settings['dashboard_url'], '/');
         if (empty($dashboard)) {
-            $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => 'missing_dashboard_url'], admin_url('options-general.php'));
+            $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => 'missing_dashboard_url'], admin_url('admin.php'));
             wp_redirect($url);
             exit;
         }
@@ -178,7 +192,7 @@ class TrustHive_Reviews_Admin
         ]);
 
         if (is_wp_error($resp)) {
-            $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => rawurlencode($resp->get_error_message())], admin_url('options-general.php'));
+            $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => rawurlencode($resp->get_error_message())], admin_url('admin.php'));
             wp_redirect($url);
             exit;
         }
@@ -188,7 +202,7 @@ class TrustHive_Reviews_Admin
         $data = json_decode($body, true);
         if ($code < 200 || $code >= 300 || empty($data) || empty($data['ok'])) {
             $err = isset($data['error']) ? $data['error'] : $body;
-            $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => rawurlencode($err)], admin_url('options-general.php'));
+            $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => rawurlencode($err)], admin_url('admin.php'));
             wp_redirect($url);
             exit;
         }
@@ -198,7 +212,7 @@ class TrustHive_Reviews_Admin
         $settings['api_key'] = isset($data['api_key']) ? sanitize_text_field($data['api_key']) : $settings['api_key'];
         update_option(self::OPTION_NAME, $settings);
 
-        $url = add_query_arg(['page' => 'trusthive-reviews', 'provisioned' => '1'], admin_url('options-general.php'));
+        $url = add_query_arg(['page' => 'trusthive-reviews', 'provisioned' => '1'], admin_url('admin.php'));
         wp_redirect($url);
         exit;
     }
@@ -243,4 +257,3 @@ class TrustHive_Reviews_Admin
         );
     }
 }
-

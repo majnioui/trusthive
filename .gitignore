@@ -2,3 +2,4 @@
 .env.local
 AGENTS.md
 *node_modules
+.next

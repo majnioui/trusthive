@@ -31,8 +31,7 @@ add_action('plugins_loaded', function () {
 
 // Add settings link on Plugins page
 add_filter('plugin_action_links_' . plugin_basename(__FILE__), function ($links) {
-    $settings_link = '<a href="' . esc_url(admin_url('options-general.php?page=trusthive-reviews')) . '">' . esc_html__('Settings', 'trusthive-reviews') . '</a>';
+    $settings_link = '<a href="' . esc_url(admin_url('admin.php?page=trusthive-reviews')) . '">' . esc_html__('Settings', 'trusthive-reviews') . '</a>';
     array_unshift($links, $settings_link);
     return $links;
 });
-
