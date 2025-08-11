@@ -51,33 +51,11 @@ function trusthive_reviews_activate()
     }
 
     $updated = false;
-    if (empty($settings['shop_id'])) {
-        if (function_exists('wp_generate_uuid4')) {
-            $settings['shop_id'] = wp_generate_uuid4();
-        } else {
-            $settings['shop_id'] = uniqid('shop_', true);
-        }
-        $updated = true;
-    }
-
-    if (empty($settings['api_key'])) {
-        if (function_exists('wp_generate_password')) {
-            $settings['api_key'] = wp_generate_password(48, true, true);
-        } elseif (function_exists('random_bytes')) {
-            $settings['api_key'] = bin2hex(random_bytes(24));
-        } elseif (function_exists('openssl_random_pseudo_bytes')) {
-            $settings['api_key'] = bin2hex(openssl_random_pseudo_bytes(24));
-        } else {
-            $settings['api_key'] = uniqid('key_', true);
-        }
-        $updated = true;
-    }
-
-    // Attempt to register on the external dashboard to create a canonical shop record,
-    // but only if we don't already have a shop_id (prevents duplicate remote records).
-    $dashboard = rtrim(defined('TRUSTHIVE_REVIEWS_SITE_URL') ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/');
     $registered = false;
-    if (empty($settings['shop_id']) && !empty($dashboard)) {
+
+    // Attempt remote registration first if we don't already have a shop_id
+    $dashboard = rtrim(defined('TRUSTHIVE_REVIEWS_SITE_URL') ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/');
+    if (empty($settings['shop_id']) && !empty($dashboard) && function_exists('wp_remote_post')) {
         $payload = [
             'site_url' => get_site_url(),
             'site_name' => get_bloginfo('name'),
@@ -88,32 +66,53 @@ function trusthive_reviews_activate()
             'body' => wp_json_encode($payload),
             'timeout' => 20,
         ];
-        // Use wp_remote_post if available (in WP activation context it should be).
-        if (function_exists('wp_remote_post')) {
-            $resp = wp_remote_post($dashboard . '/api/register', $args);
-            if (!is_wp_error($resp)) {
-                $code = wp_remote_retrieve_response_code($resp);
-                $body = wp_remote_retrieve_body($resp);
-                $data = json_decode($body, true);
-                if ($code >= 200 && $code < 300 && !empty($data) && !empty($data['ok'])) {
-                    if (!empty($data['shop_id'])) {
-                        $settings['shop_id'] = sanitize_text_field($data['shop_id']);
-                    }
-                    if (!empty($data['api_key'])) {
-                        $settings['api_key'] = sanitize_text_field($data['api_key']);
-                    }
-                    $registered = true;
-                } else {
-                    # store transient for admin to see the error
-                    set_transient('trusthive_register_error', isset($data['error']) ? $data['error'] : $body, 60*60);
+        $resp = wp_remote_post($dashboard . '/api/register', $args);
+        if (!is_wp_error($resp)) {
+            $code = wp_remote_retrieve_response_code($resp);
+            $body = wp_remote_retrieve_body($resp);
+            $data = json_decode($body, true);
+            if ($code >= 200 && $code < 300 && !empty($data) && !empty($data['ok'])) {
+                if (!empty($data['shop_id'])) {
+                    $settings['shop_id'] = sanitize_text_field($data['shop_id']);
                 }
+                if (!empty($data['api_key'])) {
+                    $settings['api_key'] = sanitize_text_field($data['api_key']);
+                }
+                $registered = true;
             } else {
-                set_transient('trusthive_register_error', $resp->get_error_message(), 60*60);
+                set_transient('trusthive_register_error', isset($data['error']) ? $data['error'] : $body, 60*60);
             }
+        } else {
+            set_transient('trusthive_register_error', $resp->get_error_message(), 60*60);
         }
     }
 
-    if ($updated || $registered) {
+    // If remote registration didn't happen, generate local credentials as fallback
+    if (!$registered) {
+        if (empty($settings['shop_id'])) {
+            if (function_exists('wp_generate_uuid4')) {
+                $settings['shop_id'] = wp_generate_uuid4();
+            } else {
+                $settings['shop_id'] = uniqid('shop_', true);
+            }
+            $updated = true;
+        }
+
+        if (empty($settings['api_key'])) {
+            if (function_exists('wp_generate_password')) {
+                $settings['api_key'] = wp_generate_password(48, true, true);
+            } elseif (function_exists('random_bytes')) {
+                $settings['api_key'] = bin2hex(random_bytes(24));
+            } elseif (function_exists('openssl_random_pseudo_bytes')) {
+                $settings['api_key'] = bin2hex(openssl_random_pseudo_bytes(24));
+            } else {
+                $settings['api_key'] = uniqid('key_', true);
+            }
+            $updated = true;
+        }
+    }
+
+    if ($registered || $updated) {
         update_option($opt_name, $settings);
     }
 }
