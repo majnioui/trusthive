@@ -137,9 +137,11 @@ class TrustHive_Reviews_Admin
             <h1><?php echo esc_html__('TrustHive Reviews', 'trusthive-reviews'); ?></h1>
 
             <?php if ($show_dashboard_button) : ?>
-                <a class="button button-primary" href="<?php echo esc_url($dashboard_link); ?>" target="_blank" rel="noopener noreferrer">
-                    <?php echo esc_html__('Open TrustHive Dashboard', 'trusthive-reviews'); ?>
-                </a>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" target="_blank" style="display:inline;">
+                    <?php wp_nonce_field('trusthive_open_dashboard_action', 'trusthive_open_dashboard_nonce'); ?>
+                    <input type="hidden" name="action" value="trusthive_open_dashboard" />
+                    <button class="button button-primary" type="submit"><?php echo esc_html__('Open TrustHive Dashboard', 'trusthive-reviews'); ?></button>
+                </form>
             <?php endif; ?>
 
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:12px;">
