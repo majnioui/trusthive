@@ -14,7 +14,7 @@ class TrustHive_Reviews_REST
     public function register_routes()
     {
         register_rest_route('trusthive/v1', '/review', [
-            'methods'  => 'POST',
+            'methods'  => ['GET', 'POST'],
             'callback' => [$this, 'handle_review'],
             'permission_callback' => function () {
                 return wp_verify_nonce(
@@ -24,11 +24,11 @@ class TrustHive_Reviews_REST
             },
             'args' => [
                 'product_id' => [ 'type' => 'integer', 'required' => true ],
-                'author_name' => [ 'type' => 'string', 'required' => true ],
-                'author_email' => [ 'type' => 'string', 'required' => true ],
-                'rating' => [ 'type' => 'integer', 'required' => true ],
+                'author_name' => [ 'type' => 'string', 'required' => false ],
+                'author_email' => [ 'type' => 'string', 'required' => false ],
+                'rating' => [ 'type' => 'integer', 'required' => false ],
                 'title' => [ 'type' => 'string', 'required' => false ],
-                'content' => [ 'type' => 'string', 'required' => true ],
+                'content' => [ 'type' => 'string', 'required' => false ],
             ],
         ]);
 
@@ -49,6 +49,62 @@ class TrustHive_Reviews_REST
 
     public function handle_review(WP_REST_Request $request)
     {
+        $method = $request->get_method();
+
+        if ($method === 'GET') {
+            return $this->get_reviews($request);
+        } else {
+            return $this->submit_review($request);
+        }
+    }
+
+    private function get_reviews(WP_REST_Request $request)
+    {
+        try {
+            $product_id = absint($request->get_param('product_id'));
+
+            if (!$product_id) {
+                return new WP_Error('missing_product_id', __('Product ID is required', 'trusthive-reviews'), ['status' => 400]);
+            }
+
+            // Get approved reviews for the product
+            $args = [
+                'post_id' => $product_id,
+                'type' => 'review',
+                'status' => 'approve',
+                'meta_key' => 'trusthive_rating',
+                'orderby' => 'comment_date',
+                'order' => 'DESC',
+                'number' => 50, // Limit to 50 reviews
+            ];
+
+            $comments = get_comments($args);
+            $reviews = [];
+
+            foreach ($comments as $comment) {
+                $rating = get_comment_meta($comment->comment_ID, 'trusthive_rating', true);
+                $title = get_comment_meta($comment->comment_ID, 'trusthive_title', true);
+
+                $reviews[] = [
+                    'id' => $comment->comment_ID,
+                    'author_name' => $comment->comment_author,
+                    'rating' => intval($rating),
+                    'title' => $title,
+                    'content' => $comment->comment_content,
+                    'created_at' => $comment->comment_date_gmt,
+                ];
+            }
+
+            return rest_ensure_response($reviews);
+
+        } catch (Exception $e) {
+            error_log('TrustHive get_reviews exception: ' . $e->getMessage() . " in " . $e->getFile() . ':' . $e->getLine());
+            return new WP_Error('internal_error', __('Internal server error', 'trusthive-reviews'), ['status' => 500]);
+        }
+    }
+
+    private function submit_review(WP_REST_Request $request)
+    {
         try {
             // Validate nonce if present
             $nonce = isset($_SERVER['HTTP_X_WP_NONCE']) ? $_SERVER['HTTP_X_WP_NONCE'] : '';
@@ -57,90 +113,90 @@ class TrustHive_Reviews_REST
             }
 
             $product_id   = absint($request->get_param('product_id'));
-        $author_name  = sanitize_text_field($request->get_param('author_name'));
-        $author_email = sanitize_email($request->get_param('author_email'));
-        $rating       = absint($request->get_param('rating'));
-        $title        = sanitize_text_field($request->get_param('title'));
-        $content      = sanitize_textarea_field($request->get_param('content'));
+            $author_name  = sanitize_text_field($request->get_param('author_name'));
+            $author_email = sanitize_email($request->get_param('author_email'));
+            $rating       = absint($request->get_param('rating'));
+            $title        = sanitize_text_field($request->get_param('title'));
+            $content      = sanitize_textarea_field($request->get_param('content'));
 
-        if ($rating < 1 || $rating > 5) {
-            return new WP_Error('invalid_rating', __('Rating must be between 1 and 5', 'trusthive-reviews'), ['status' => 400]);
-        }
-
-        $settings = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
-        // Use the hardcoded TrustHive site URL and append the API path.
-        $api_base = rtrim(defined('TRUSTHIVE_REVIEWS_SITE_URL') ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/') . '/api';
-        $shop_id  = isset($settings['shop_id']) ? $settings['shop_id'] : '';
-        $api_key  = isset($settings['api_key']) ? $settings['api_key'] : '';
-
-        if (empty($shop_id)) {
-            return new WP_Error('missing_config', __('Plugin not configured: set Shop ID.', 'trusthive-reviews'), ['status' => 400]);
-        }
-
-        $payload = [
-            'shop_id'    => $shop_id,
-            'product_id' => $product_id,
-            'author'     => [ 'name' => $author_name, 'email' => $author_email ],
-            'rating'     => $rating,
-            'title'      => $title,
-            'content'    => $content,
-            'source'     => get_bloginfo('name'),
-            'site_url'   => site_url(),
-        ];
-
-        // Persist review into the local WordPress database as a product comment
-        $comment_data = [
-            'comment_post_ID'      => $product_id,
-            'comment_author'       => $author_name,
-            'comment_author_email' => $author_email,
-            'comment_content'      => $content,
-            'comment_type'         => 'review',
-            'comment_approved'     => 0,
-        ];
-
-        // Try to insert the comment locally. If it fails, try once more using wp_slash
-        // and record a transient so admins can debug later.
-        $comment_id = wp_insert_comment($comment_data);
-        if (!($comment_id && !is_wp_error($comment_id))) {
-            // log and retry with slashed data
-            error_log('TrustHive: wp_insert_comment initial attempt failed for product_id=' . intval($product_id));
-            $slashed = wp_slash($comment_data);
-            $comment_id = wp_insert_comment($slashed);
-        }
-
-        if ($comment_id && !is_wp_error($comment_id)) {
-            add_comment_meta($comment_id, 'trusthive_shop_id', $shop_id, true);
-            add_comment_meta($comment_id, 'trusthive_rating', $rating, true);
-            if (!empty($title)) {
-                add_comment_meta($comment_id, 'trusthive_title', $title, true);
+            if ($rating < 1 || $rating > 5) {
+                return new WP_Error('invalid_rating', __('Rating must be between 1 and 5', 'trusthive-reviews'), ['status' => 400]);
             }
-            add_comment_meta($comment_id, 'trusthive_source', get_bloginfo('name'), true);
-            add_comment_meta($comment_id, 'trusthive_site_url', site_url(), true);
-        } else {
-            $err_msg = 'Failed to save review locally for product_id=' . intval($product_id);
-            error_log('TrustHive: ' . $err_msg);
-            set_transient('trusthive_local_save_error', $err_msg, 60*60);
-        }
 
-        $args = [ 'headers' => [ 'Content-Type' => 'application/json' ], 'body' => wp_json_encode($payload), 'timeout' => 15 ];
-        if (!empty($api_key)) {
-            $args['headers']['Authorization'] = 'Bearer ' . $api_key;
-        }
+            $settings = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
+            // Use the hardcoded TrustHive site URL and append the API path.
+            $api_base = rtrim(defined('TRUSTHIVE_REVIEWS_SITE_URL') ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/') . '/api';
+            $shop_id  = isset($settings['shop_id']) ? $settings['shop_id'] : '';
+            $api_key  = isset($settings['api_key']) ? $settings['api_key'] : '';
 
-        $url = $api_base . '/reviews';
-        $resp = wp_remote_post($url, $args);
-        if (is_wp_error($resp)) {
-            error_log('TrustHive remote error: ' . $resp->get_error_message());
-            return new WP_Error('remote_error', $resp->get_error_message(), ['status' => 500]);
-        }
-        $code = wp_remote_retrieve_response_code($resp);
-        $body = wp_remote_retrieve_body($resp);
-        if ($code < 200 || $code >= 300) {
-            error_log('TrustHive upstream error (' . $code . '): ' . $body);
-            return new WP_Error('remote_error', sprintf(__('Upstream error (%d): %s', 'trusthive-reviews'), $code, $body), ['status' => 500]);
-        }
+            if (empty($shop_id)) {
+                return new WP_Error('missing_config', __('Plugin not configured: set Shop ID.', 'trusthive-reviews'), ['status' => 400]);
+            }
 
-        return new WP_REST_Response([ 'ok' => true ], 200);
+            $payload = [
+                'shop_id'    => $shop_id,
+                'product_id' => $product_id,
+                'author'     => [ 'name' => $author_name, 'email' => $author_email ],
+                'rating'     => $rating,
+                'title'      => $title,
+                'content'    => $content,
+                'source'     => get_bloginfo('name'),
+                'site_url'   => site_url(),
+            ];
+
+            // Persist review into the local WordPress database as a product comment
+            $comment_data = [
+                'comment_post_ID'      => $product_id,
+                'comment_author'       => $author_name,
+                'comment_author_email' => $author_email,
+                'comment_content'      => $content,
+                'comment_type'         => 'review',
+                'comment_approved'     => 0,
+            ];
+
+            // Try to insert the comment locally. If it fails, try once more using wp_slash
+            // and record a transient so admins can debug later.
+            $comment_id = wp_insert_comment($comment_data);
+            if (!($comment_id && !is_wp_error($comment_id))) {
+                // log and retry with slashed data
+                error_log('TrustHive: wp_insert_comment initial attempt failed for product_id=' . intval($product_id));
+                $slashed = wp_slash($comment_data);
+                $comment_id = wp_insert_comment($slashed);
+            }
+
+            if ($comment_id && !is_wp_error($comment_id)) {
+                add_comment_meta($comment_id, 'trusthive_shop_id', $shop_id, true);
+                add_comment_meta($comment_id, 'trusthive_rating', $rating, true);
+                if (!empty($title)) {
+                    add_comment_meta($comment_id, 'trusthive_title', $title, true);
+                }
+                add_comment_meta($comment_id, 'trusthive_source', get_bloginfo('name'), true);
+                add_comment_meta($comment_id, 'trusthive_site_url', site_url(), true);
+            } else {
+                $err_msg = 'Failed to save review locally for product_id=' . intval($product_id);
+                error_log('TrustHive: ' . $err_msg);
+                set_transient('trusthive_local_save_error', $err_msg, 60*60);
+            }
+
+            $args = [ 'headers' => [ 'Content-Type' => 'application/json' ], 'body' => wp_json_encode($payload), 'timeout' => 15 ];
+            if (!empty($api_key)) {
+                $args['headers']['Authorization'] = 'Bearer ' . $api_key;
+            }
+
+            $url = $api_base . '/reviews';
+            $resp = wp_remote_post($url, $args);
+            if (is_wp_error($resp)) {
+                error_log('TrustHive remote error: ' . $resp->get_error_message());
+                return new WP_Error('remote_error', $resp->get_error_message(), ['status' => 500]);
+            }
+            $code = wp_remote_retrieve_response_code($resp);
+            $body = wp_remote_retrieve_body($resp);
+            if ($code < 200 || $code >= 300) {
+                error_log('TrustHive upstream error (' . $code . '): ' . $body);
+                return new WP_Error('remote_error', sprintf(__('Upstream error (%d): %s', 'trusthive-reviews'), $code, $body), ['status' => 500]);
+            }
+
+            return new WP_REST_Response([ 'ok' => true ], 200);
         } catch (Exception $e) {
             error_log('TrustHive handle_review exception: ' . $e->getMessage() . " in " . $e->getFile() . ':' . $e->getLine());
             return new WP_Error('internal_error', __('Internal server error', 'trusthive-reviews'), ['status' => 500]);
