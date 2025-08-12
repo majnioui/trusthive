@@ -15,7 +15,7 @@ type Review = {
   approved?: boolean;
 };
 
-export default function ReviewTableClient({ initial, shop, ts, token }: { initial: Review[]; shop?: string; ts?: string; token?: string }) {
+export default function ReviewTableClient({ initial, token }: { initial: Review[]; token?: string }) {
   const [reviews, setReviews] = useState<Review[]>(initial || []);
   const [loading, setLoading] = useState<string | null>(null);
   const [sessionCreated, setSessionCreated] = useState(false);
@@ -23,74 +23,45 @@ export default function ReviewTableClient({ initial, shop, ts, token }: { initia
   // try to establish session cookie so subsequent requests don't need token
   React.useEffect(() => {
     if (sessionCreated) return;
-    if (!shop || !ts || !token) return;
+    if (!token) return;
     (async () => {
       try {
-        await fetch('/api/auth/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shop, ts, token }) });
+        await fetch('/api/auth/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }), credentials: 'same-origin' });
       } catch (e) {
         // ignore
       }
       setSessionCreated(true);
+      // remove token from URL to avoid leaking
+      try {
+        if (typeof window !== 'undefined' && window.history && window.location) {
+          const url = new URL(window.location.href);
+          url.searchParams.delete('token');
+          url.searchParams.delete('shop');
+          url.searchParams.delete('ts');
+          window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+        }
+      } catch (e) { }
     })();
-  }, [shop, ts, token, sessionCreated]);
+  }, [token, sessionCreated]);
 
-  async function handleDelete(id: string) {
-    if (!confirm('Delete this review?')) return;
+  async function doAction(id: string, action: string) {
+    if (action === 'delete' && !confirm('Delete this review?')) return;
     setLoading(id);
     try {
       const qs = new URLSearchParams();
-      if (shop) qs.set('shop', shop);
-      if (ts) qs.set('ts', ts);
-      // if we already created session cookie, token is not required; include token otherwise
       if (token) qs.set('token', token);
       const url = `/api/reviews/${encodeURIComponent(id)}/action?${qs.toString()}`;
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'delete' }), credentials: 'same-origin' });
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }), credentials: 'same-origin' });
       const data = await res.json();
       if (data && data.ok) {
-        setReviews(prev => prev.filter(r => r.id !== id));
+        if (action === 'delete') setReviews(prev => prev.filter(r => r.id !== id));
+        if (action === 'approve') setReviews(prev => prev.map(r => r.id === id ? { ...r, approved: true } : r));
+        if (action === 'hide') setReviews(prev => prev.map(r => r.id === id ? { ...r, approved: false } : r));
       } else {
-        alert('Delete failed: ' + (data && data.error ? data.error : res.statusText));
-      }
-
-  async function handleApprove(id: string) {
-    setLoading(id);
-    try {
-      const qs = new URLSearchParams(); if (shop) qs.set('shop', shop); if (ts) qs.set('ts', ts); if (token) qs.set('token', token);
-      const url = `/api/reviews/${encodeURIComponent(id)}/action?${qs.toString()}`;
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'approve' }), credentials: 'same-origin' });
-      const data = await res.json();
-      if (data && data.ok) {
-        setReviews(prev => prev.map(r => r.id === id ? { ...r, approved: true } : r));
-      } else {
-        alert('Approve failed: ' + (data && data.error ? data.error : res.statusText));
+        alert((action[0].toUpperCase() + action.slice(1)) + ' failed: ' + (data && data.error ? data.error : res.statusText));
       }
     } catch (err) {
-      alert('Approve error: ' + String(err));
-    } finally {
-      setLoading(null);
-    }
-  }
-
-  async function handleHide(id: string) {
-    setLoading(id);
-    try {
-      const qs = new URLSearchParams(); if (shop) qs.set('shop', shop); if (ts) qs.set('ts', ts); if (token) qs.set('token', token);
-      const url = `/api/reviews/${encodeURIComponent(id)}/action?${qs.toString()}`;
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'hide' }), credentials: 'same-origin' });
-      const data = await res.json();
-      if (data && data.ok) {
-        setReviews(prev => prev.map(r => r.id === id ? { ...r, approved: false } : r));
-      } else {
-        alert('Hide failed: ' + (data && data.error ? data.error : res.statusText));
-      }
-    } catch (err) {
-      alert('Hide error: ' + String(err));
-    } finally {
-      setLoading(null);
-    }
-  }
-    } catch (err) {
-      alert('Delete error: ' + String(err));
+      alert((action[0].toUpperCase() + action.slice(1)) + ' error: ' + String(err));
     } finally {
       setLoading(null);
     }
@@ -121,9 +92,9 @@ export default function ReviewTableClient({ initial, shop, ts, token }: { initia
             <td className="px-4 py-2 align-top">{new Date(r.createdAt).toLocaleString()}</td>
             <td className="px-4 py-2 align-top">
               <div className="flex items-center gap-2">
-                <Button onClick={() => handleApprove(r.id)} disabled={loading === r.id}>{loading === r.id ? 'Working...' : 'Approve'}</Button>
-                <Button onClick={() => handleHide(r.id)} disabled={loading === r.id}>{loading === r.id ? 'Working...' : 'Hide'}</Button>
-                <Button onClick={() => handleDelete(r.id)} disabled={loading === r.id} className="border-red-300 text-red-600">{loading === r.id ? 'Deleting...' : 'Delete'}</Button>
+                <Button onClick={() => doAction(r.id, 'approve')} disabled={loading === r.id}>{loading === r.id ? 'Working...' : 'Approve'}</Button>
+                <Button onClick={() => doAction(r.id, 'hide')} disabled={loading === r.id}>{loading === r.id ? 'Working...' : 'Hide'}</Button>
+                <Button onClick={() => doAction(r.id, 'delete')} disabled={loading === r.id} className="border-red-300 text-red-600">{loading === r.id ? 'Deleting...' : 'Delete'}</Button>
                 {r.approved ? <Badge>Approved</Badge> : null}
               </div>
             </td>

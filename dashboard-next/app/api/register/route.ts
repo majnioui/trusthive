@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../lib/prisma';
 import crypto from 'crypto';
+import { createOpaqueTokenForShop } from '../../../lib/auth';
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -14,6 +15,9 @@ export async function POST(req: Request) {
     data: { shopId, siteUrl: site_url, apiKey }
   });
 
-  return NextResponse.json({ ok: true, shop_id: shopId, api_key: apiKey });
+  // create a short-lived opaque token so callers can immediately redirect to dashboard
+  const token = await createOpaqueTokenForShop(shopId, 300, true);
+
+  return NextResponse.json({ ok: true, shop_id: shopId, api_key: apiKey, token });
 }
 

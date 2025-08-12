@@ -1,14 +1,27 @@
 import { prisma } from '../../lib/prisma';
-import { verifyTokenForShop } from '../../lib/auth';
+import { verifyOpaqueToken, verifySessionCookie } from '../../lib/auth';
 import DashboardClientWrapper from './DashboardClientWrapper';
+import { headers } from 'next/headers';
 
 export default async function Page({ searchParams }: { searchParams?: Record<string,string> }) {
-  const shop = searchParams?.shop;
-  const ts = searchParams?.ts;
-  const token = searchParams?.token;
+  const sp = await (searchParams as any);
+  const token = sp?.token;
 
-  const ok = await verifyTokenForShop(shop, ts, token);
-  if (!ok) {
+  // Try token first (opaque token).
+  let shopId: string | null = null;
+  if (token) {
+    shopId = await verifyOpaqueToken(token);
+  }
+
+  // If no token or invalid, try existing session cookie
+  if (!shopId) {
+    const headersList = await headers();
+    const cookieHeader = headersList.get('cookie') || '';
+    const fakeReq = { headers: { get: (_: string) => cookieHeader } } as unknown as Request;
+    shopId = await verifySessionCookie(fakeReq);
+  }
+
+  if (!shopId) {
     return (
       <div>
         <h1>Unauthorized</h1>
@@ -17,16 +30,16 @@ export default async function Page({ searchParams }: { searchParams?: Record<str
     );
   }
 
-  const reviews = await prisma.review.findMany({ where: { shopId: shop }, orderBy: { createdAt: 'desc' } });
+  const reviews = await prisma.review.findMany({ where: { shopId }, orderBy: { createdAt: 'desc' } });
 
   // serialize dates to string for client component
   const serial = reviews.map(r => ({ ...r, createdAt: r.createdAt.toISOString() }));
 
   return (
     <div>
-      <h1>Dashboard — {shop}</h1>
-      <p>Showing reviews for this shop only.</p>
-      <DashboardClientWrapper initial={serial} shop={shop} ts={ts} token={token} />
+      <h1>Dashboard</h1>
+      <p>Showing reviews for your shop.</p>
+      <DashboardClientWrapper initial={serial} token={token} />
     </div>
   );
 }

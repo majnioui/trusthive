@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../../../lib/prisma';
-import { verifyTokenForShop, verifySessionCookie } from '../../../../../lib/auth';
+import { verifyOpaqueToken, verifySessionCookie } from '../../../../../lib/auth';
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   const id = params.id;
@@ -34,16 +34,18 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     }
   }
 
-  // Accept either full token verification OR a valid session cookie
-  let ok = await verifyTokenForShop(shop, ts, token);
-  if (!ok) {
-    const sessionShop = await verifySessionCookie(req as unknown as Request);
-    if (!sessionShop || (shop && sessionShop !== shop)) {
-      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-    }
-    // treat verified session as ok and set shop value
-    ok = true;
+  // Accept either opaque token verification OR a valid session cookie
+  let shopId: string | null = null;
+  if (token) {
+    shopId = await verifyOpaqueToken(token);
   }
+  if (!shopId) {
+    const sessionShop = await verifySessionCookie(req as unknown as Request);
+    if (!sessionShop) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+    shopId = sessionShop;
+  }
+  // if shop query param was provided, ensure it matches the authenticated shop
+  if (shop && shop !== shopId) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
 
   if (action === 'approve') {
     await prisma.review.update({ where: { id }, data: { approved: true } });

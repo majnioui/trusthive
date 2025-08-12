@@ -14,6 +14,7 @@ model Shop {
   apiKey    String
   createdAt DateTime @default(now())
   reviews   Review[]
+  authTokens AuthToken[]
 }
 
 model Review {
@@ -33,4 +34,17 @@ model Review {
 
   @@index([shopId])
   @@index([productId])
+}
+
+model AuthToken {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  shop       Shop     @relation(fields: [shopId], references: [shopId])
+  shopId     String
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  used       Boolean  @default(false)
+  oneTime    Boolean  @default(true)
+
+  @@index([shopId])
 }

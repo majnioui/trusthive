@@ -14,6 +14,7 @@ class TrustHive_Reviews_Admin
         add_action('admin_menu', [$this, 'register_menu']);
         add_action('admin_init', [$this, 'register_settings']);
         add_action('admin_post_trusthive_register', [$this, 'handle_register']);
+        add_action('admin_post_trusthive_open_dashboard', [$this, 'handle_open_dashboard']);
     }
 
     public function register_menu()
@@ -136,13 +137,15 @@ class TrustHive_Reviews_Admin
             <h1><?php echo esc_html__('TrustHive Reviews', 'trusthive-reviews'); ?></h1>
 
             <?php if ($dashboard_link) : ?>
-                <p>
-                    <a class="button button-primary" href="<?php echo $dashboard_link; ?>" target="_blank" rel="noopener noreferrer">
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" target="_blank" rel="noopener noreferrer" style="display:inline;">
+                    <?php wp_nonce_field('trusthive_open_dashboard_action', 'trusthive_open_dashboard_nonce'); ?>
+                    <input type="hidden" name="action" value="trusthive_open_dashboard" />
+                    <button class="button button-primary" type="submit">
                         <?php echo esc_html__('Open TrustHive Dashboard', 'trusthive-reviews'); ?>
-                    </a>
-                </p>
+                    </button>
+                </form>
 
-            <!-- External dashboard link above. Credentials hidden. -->
+            <!-- Server-side dashboard opener above. Credentials hidden and token requested server-to-server. -->
 
             <?php endif; ?>
 
@@ -241,6 +244,66 @@ class TrustHive_Reviews_Admin
         }
 
         $url = add_query_arg(['page' => 'trusthive-reviews', 'register_error' => '1'], admin_url('admin.php'));
+        wp_redirect($url);
+        exit;
+    }
+
+    // Server-side handler to request a short-lived opaque token and redirect to dashboard
+    public function handle_open_dashboard()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Unauthorized', 'trusthive-reviews'));
+        }
+        if (!isset($_POST['trusthive_open_dashboard_nonce']) || !wp_verify_nonce($_POST['trusthive_open_dashboard_nonce'], 'trusthive_open_dashboard_action')) {
+            wp_die(__('Invalid nonce', 'trusthive-reviews'));
+        }
+
+        $settings = $this->get_settings();
+        $shop = $settings['shop_id'];
+        $api_key = $settings['api_key'];
+
+        if (empty($shop) || empty($api_key)) {
+            $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => 'missing_credentials'], admin_url('admin.php'));
+            wp_redirect($url);
+            exit;
+        }
+
+        $dashboard = rtrim(defined('TRUSTHIVE_REVIEWS_SITE_URL') ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/');
+        if (empty($dashboard)) {
+            $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => 'missing_dashboard_url'], admin_url('admin.php'));
+            wp_redirect($url);
+            exit;
+        }
+
+        // Call server-side generate-token endpoint
+        $resp = null;
+        if (function_exists('wp_remote_post')) {
+            $resp = wp_remote_post($dashboard . '/api/auth/generate-token', [
+                'headers' => [
+                    'Content-Type' => 'application/json',
+                    'Authorization' => 'Bearer ' . $api_key,
+                ],
+                'body' => wp_json_encode(['shop' => $shop]),
+                'timeout' => 15,
+            ]);
+        }
+
+        if ($resp && !is_wp_error($resp)) {
+            $code = wp_remote_retrieve_response_code($resp);
+            $body = wp_remote_retrieve_body($resp);
+            $json = json_decode($body, true);
+            if ($code === 200 && !empty($json['token'])) {
+                $token = $json['token'];
+                wp_redirect($dashboard . '/dashboard?token=' . rawurlencode($token));
+                exit;
+            }
+            $err = isset($json['error']) ? $json['error'] : 'unknown';
+            set_transient('trusthive_register_error', 'token_error: ' . $err, 60*5);
+        } else {
+            set_transient('trusthive_register_error', 'network_error', 60*5);
+        }
+
+        $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => '1'], admin_url('admin.php'));
         wp_redirect($url);
         exit;
     }

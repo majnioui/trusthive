@@ -1,20 +1,37 @@
 import crypto from 'crypto';
 import { prisma } from './prisma';
 
-export async function verifyTokenForShop(shop: string | undefined, ts: string | undefined, token: string | undefined, maxAge = 300) {
-  if (!shop || !ts || !token) return false;
-  const shopEntry = await prisma.shop.findUnique({ where: { shopId: shop } });
-  if (!shopEntry || !shopEntry.apiKey) return false;
-  const secret = shopEntry.apiKey;
-  const now = Math.floor(Date.now() / 1000);
-  const tnum = parseInt(ts, 10);
-  if (Number.isNaN(tnum) || Math.abs(now - tnum) > maxAge) return false;
-  const expected = crypto.createHmac('sha256', secret).update(`${shop}|${ts}`).digest('hex');
-  try {
-    return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(token, 'hex'));
-  } catch (e) {
-    return expected === token;
+// Legacy HMAC-based verification removed in favor of opaque tokens.
+// Create a new opaque token and store its hash in the database.
+export async function createOpaqueTokenForShop(shop: string, ttlSeconds = 300, oneTime = true) {
+  if (!shop) throw new Error('missing shop');
+  const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+  await prisma.authToken.create({ data: { tokenHash, shopId: shop, expiresAt, oneTime } });
+  return token;
+}
+
+// Verify an opaque token and return the associated shopId, or null if invalid.
+export async function verifyOpaqueToken(token: string | undefined) {
+  if (!token) return null;
+  // Guard: if Prisma client was not regenerated after adding the AuthToken model
+  // then `prisma.authToken` may be undefined which throws a TypeError.
+  // Return null and log an actionable message so the server doesn't crash.
+  if (!(prisma as any).authToken) {
+    console.error('Prisma client missing `AuthToken` model. Run `npx prisma generate` and apply DB changes (`npx prisma db push` or migrations`).');
+    return null;
   }
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const rec = await prisma.authToken.findUnique({ where: { tokenHash } });
+  if (!rec) return null;
+  if (rec.used) return null;
+  if (rec.expiresAt.getTime() < Date.now()) return null;
+  // mark used if oneTime
+  if (rec.oneTime) {
+    try { await prisma.authToken.update({ where: { tokenHash }, data: { used: true } }); } catch (e) { }
+  }
+  return rec.shopId;
 }
 
 // Verify session cookie value from request headers. Cookie format: base64(payload) + '.' + hexsig
