@@ -5,11 +5,53 @@ import { prisma } from './prisma';
 // Create a new opaque token and store its hash in the database.
 export async function createOpaqueTokenForShop(shop: string, ttlSeconds = 300, oneTime = true) {
   if (!shop) throw new Error('missing shop');
+
+  // Clean up old tokens for this shop before creating a new one
+  await cleanupOldTokensForShop(shop);
+
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
   await prisma.authToken.create({ data: { tokenHash, shopId: shop, expiresAt, oneTime } });
   return token;
+}
+
+// Clean up old, expired, and used tokens for a specific shop
+async function cleanupOldTokensForShop(shopId: string) {
+  try {
+    const now = new Date();
+    await prisma.authToken.deleteMany({
+      where: {
+        shopId: shopId,
+        OR: [
+          { expiresAt: { lt: now } },        // Expired tokens
+          { used: true },                    // Used one-time tokens
+        ]
+      }
+    });
+  } catch (error) {
+    console.error('Error cleaning up old tokens for shop:', shopId, error);
+  }
+}
+
+// Clean up all expired and used tokens across all shops (useful for periodic cleanup)
+export async function cleanupAllOldTokens() {
+  try {
+    const now = new Date();
+    const result = await prisma.authToken.deleteMany({
+      where: {
+        OR: [
+          { expiresAt: { lt: now } },        // Expired tokens
+          { used: true },                    // Used one-time tokens
+        ]
+      }
+    });
+    console.log(`Cleaned up ${result.count} old tokens`);
+    return result.count;
+  } catch (error) {
+    console.error('Error cleaning up all old tokens:', error);
+    return 0;
+  }
 }
 
 // Verify an opaque token and return the associated shopId, or null if invalid.

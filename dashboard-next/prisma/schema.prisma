@@ -47,4 +47,6 @@ model AuthToken {
   oneTime    Boolean  @default(true)
 
   @@index([shopId])
+  @@index([expiresAt]) // Add index for efficient cleanup queries
+  @@index([used, expiresAt]) // Composite index for cleanup operations
 }
