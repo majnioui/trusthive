@@ -114,6 +114,7 @@ class TrustHive_Reviews_Admin
         }
 
         $dashboard_link = esc_url(add_query_arg($args, $dashboard . '/dashboard'));
+        $show_dashboard_button = !empty($dashboard_link);
 
         // Show admin notices: registration error transient or legacy query params
         $reg_err = get_transient('trusthive_register_error');
@@ -135,17 +136,8 @@ class TrustHive_Reviews_Admin
         <div class="wrap">
             <h1><?php echo esc_html__('TrustHive Reviews', 'trusthive-reviews'); ?></h1>
 
-            <?php
-            // Simple dashboard link — open the configured site URL + /dashboard in a new tab.
-            $simple_dashboard = '';
-            if (defined('TRUSTHIVE_REVIEWS_SITE_URL') && TRUSTHIVE_REVIEWS_SITE_URL) {
-                $simple_dashboard = rtrim(TRUSTHIVE_REVIEWS_SITE_URL, '/') . '/dashboard';
-            } elseif ($dashboard) {
-                // Fallback to previously computed dashboard URL if the constant is not defined.
-                $simple_dashboard = rtrim($dashboard, '/') . '/dashboard';
-            }
-            if ($simple_dashboard) : ?>
-                <a class="button button-primary" href="<?php echo esc_url($simple_dashboard); ?>" target="_blank" rel="noopener noreferrer">
+            <?php if ($show_dashboard_button) : ?>
+                <a class="button button-primary" href="<?php echo esc_url($dashboard_link); ?>" target="_blank" rel="noopener noreferrer">
                     <?php echo esc_html__('Open TrustHive Dashboard', 'trusthive-reviews'); ?>
                 </a>
             <?php endif; ?>
@@ -237,6 +229,7 @@ class TrustHive_Reviews_Admin
                 wp_redirect($url);
                 exit;
             }
+            
             $err = isset($data['error']) ? $data['error'] : $body;
             set_transient('trusthive_register_error', $err, 60*60);
         } else {
@@ -248,6 +241,7 @@ class TrustHive_Reviews_Admin
         wp_redirect($url);
         exit;
     }
+
 
     // Server-side handler to request a short-lived opaque token and redirect to dashboard
     public function handle_open_dashboard()
@@ -308,5 +302,6 @@ class TrustHive_Reviews_Admin
         wp_redirect($url);
         exit;
     }
+
 
 }
