@@ -98,23 +98,22 @@ class TrustHive_Reviews_Admin
         $settings = $this->get_settings();
         $dashboard_link = '';
         // Dashboard and API host are hardcoded to the configured site URL constant.
-        if (defined('TRUSTHIVE_REVIEWS_SITE_URL') && TRUSTHIVE_REVIEWS_SITE_URL) {
-            // Build a short-lived HMAC token so the owner can open the external dashboard
-            // without re-authenticating. The external app should verify `shop`, `ts` and
-            // `token` using the shared `api_key` as secret.
-            $shop_value = $settings['shop_id'] ?: site_url();
-            $args = [ 'shop' => rawurlencode($shop_value) ];
+        $dashboard = rtrim((defined('TRUSTHIVE_REVIEWS_SITE_URL') && TRUSTHIVE_REVIEWS_SITE_URL) ? TRUSTHIVE_REVIEWS_SITE_URL : 'https://fair-muskox-certainly.ngrok-free.app', '/');
+        // Build a short-lived HMAC token so the owner can open the external dashboard
+        // without re-authenticating. The external app should verify `shop`, `ts` and
+        // `token` using the shared `api_key` as secret.
+        $shop_value = $settings['shop_id'] ?: site_url();
+        $args = [ 'shop' => rawurlencode($shop_value) ];
 
-            if (!empty($settings['api_key'])) {
-                $ts = time();
-                $token_payload = $shop_value . '|' . $ts;
-                $token = hash_hmac('sha256', $token_payload, $settings['api_key']);
-                $args['ts'] = $ts;
-                $args['token'] = $token;
-            }
-
-            $dashboard_link = esc_url(add_query_arg($args, rtrim(TRUSTHIVE_REVIEWS_SITE_URL, '/') . '/dashboard'));
+        if (!empty($settings['api_key'])) {
+            $ts = time();
+            $token_payload = $shop_value . '|' . $ts;
+            $token = hash_hmac('sha256', $token_payload, $settings['api_key']);
+            $args['ts'] = $ts;
+            $args['token'] = $token;
         }
+
+        $dashboard_link = esc_url(add_query_arg($args, $dashboard . '/dashboard'));
 
         // Show admin notices: registration error transient or legacy query params
         $reg_err = get_transient('trusthive_register_error');
@@ -136,17 +135,19 @@ class TrustHive_Reviews_Admin
         <div class="wrap">
             <h1><?php echo esc_html__('TrustHive Reviews', 'trusthive-reviews'); ?></h1>
 
-            <?php if ($dashboard_link) : ?>
-                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" target="_blank" rel="noopener noreferrer" style="display:inline;">
-                    <?php wp_nonce_field('trusthive_open_dashboard_action', 'trusthive_open_dashboard_nonce'); ?>
-                    <input type="hidden" name="action" value="trusthive_open_dashboard" />
-                    <button class="button button-primary" type="submit">
-                        <?php echo esc_html__('Open TrustHive Dashboard', 'trusthive-reviews'); ?>
-                    </button>
-                </form>
-
-            <!-- Server-side dashboard opener above. Credentials hidden and token requested server-to-server. -->
-
+            <?php
+            // Simple dashboard link — open the configured site URL + /dashboard in a new tab.
+            $simple_dashboard = '';
+            if (defined('TRUSTHIVE_REVIEWS_SITE_URL') && TRUSTHIVE_REVIEWS_SITE_URL) {
+                $simple_dashboard = rtrim(TRUSTHIVE_REVIEWS_SITE_URL, '/') . '/dashboard';
+            } elseif ($dashboard) {
+                // Fallback to previously computed dashboard URL if the constant is not defined.
+                $simple_dashboard = rtrim($dashboard, '/') . '/dashboard';
+            }
+            if ($simple_dashboard) : ?>
+                <a class="button button-primary" href="<?php echo esc_url($simple_dashboard); ?>" target="_blank" rel="noopener noreferrer">
+                    <?php echo esc_html__('Open TrustHive Dashboard', 'trusthive-reviews'); ?>
+                </a>
             <?php endif; ?>
 
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:12px;">
@@ -294,7 +295,7 @@ class TrustHive_Reviews_Admin
             $json = json_decode($body, true);
             if ($code === 200 && !empty($json['token'])) {
                 $token = $json['token'];
-                wp_redirect($dashboard . '/dashboard?token=' . rawurlencode($token));
+                wp_redirect($dashboard . '/api/auth/session-redirect?token=' . rawurlencode($token));
                 exit;
             }
             $err = isset($json['error']) ? $json['error'] : 'unknown';
