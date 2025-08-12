@@ -231,7 +231,7 @@ class TrustHive_Reviews_Admin
                 wp_redirect($url);
                 exit;
             }
-            
+
             $err = isset($data['error']) ? $data['error'] : $body;
             set_transient('trusthive_register_error', $err, 60*60);
         } else {
@@ -291,7 +291,7 @@ class TrustHive_Reviews_Admin
             $json = json_decode($body, true);
             if ($code === 200 && !empty($json['token'])) {
                 $token = $json['token'];
-                wp_redirect($dashboard . '/api/auth/session-redirect?token=' . rawurlencode($token));
+                wp_redirect($dashboard . '/dashboard?token=' . rawurlencode($token));
                 exit;
             }
             $err = isset($json['error']) ? $json['error'] : 'unknown';
