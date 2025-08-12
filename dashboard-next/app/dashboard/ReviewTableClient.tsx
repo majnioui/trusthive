@@ -20,37 +20,19 @@ export default function ReviewTableClient({ initial, token }: { initial: Review[
   const [loading, setLoading] = useState<string | null>(null);
   const [sessionCreated, setSessionCreated] = useState(false);
 
-  // try to establish session cookie so subsequent requests don't need token
+  // Session creation is now handled in DashboardClientWrapper
+  // This useEffect is kept for backward compatibility but should not be needed
   React.useEffect(() => {
     if (sessionCreated) return;
     if (!token) return;
-    (async () => {
-      try {
-        await fetch('/api/auth/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }), credentials: 'same-origin' });
-      } catch (e) {
-        // ignore
-      }
-      setSessionCreated(true);
-      // remove token from URL to avoid leaking
-      try {
-        if (typeof window !== 'undefined' && window.history && window.location) {
-          const url = new URL(window.location.href);
-          url.searchParams.delete('token');
-          url.searchParams.delete('shop');
-          url.searchParams.delete('ts');
-          window.history.replaceState({}, '', url.pathname + url.search + url.hash);
-        }
-      } catch (e) { }
-    })();
+    setSessionCreated(true);
   }, [token, sessionCreated]);
 
   async function doAction(id: string, action: string) {
     if (action === 'delete' && !confirm('Delete this review?')) return;
     setLoading(id);
     try {
-      const qs = new URLSearchParams();
-      if (token) qs.set('token', token);
-      const url = `/api/reviews/${encodeURIComponent(id)}/action?${qs.toString()}`;
+      const url = `/api/reviews/${encodeURIComponent(id)}/action`;
       const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }), credentials: 'same-origin' });
       const data = await res.json();
       if (data && data.ok) {

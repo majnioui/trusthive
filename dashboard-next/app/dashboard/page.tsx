@@ -7,7 +7,7 @@ export default async function Page({ searchParams }: { searchParams?: Record<str
   const sp = await (searchParams as any);
   const token = sp?.token;
 
-  // Try token first (opaque token).
+  // Try token first (opaque token) if present in URL
   let shopId: string | null = null;
   if (token) {
     shopId = await verifyOpaqueToken(token);
@@ -39,7 +39,7 @@ export default async function Page({ searchParams }: { searchParams?: Record<str
     <div>
       <h1>Dashboard</h1>
       <p>Showing reviews for your shop.</p>
-      <DashboardClientWrapper initial={serial} token={token} />
+      <DashboardClientWrapper initial={serial} token={token} shop={shopId} />
     </div>
   );
 }
