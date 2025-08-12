@@ -31,11 +31,8 @@
         <svg viewBox="0 0 24 24" fill="currentColor">
           <path d="M19 13H5v-2h14v2z"/>
         </svg>
-        Close
+        Cancel
       `;
-
-      // Load reviews when form is opened
-      loadReviews(widget);
     }
   }
 
@@ -230,6 +227,9 @@
       if (toggleBtn) {
         toggleBtn.addEventListener('click', () => toggleReviewForm(widget));
       }
+
+      // Load reviews immediately when widget loads
+      loadReviews(widget);
     });
   }
 

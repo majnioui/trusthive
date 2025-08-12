@@ -67,12 +67,30 @@ class TrustHive_Reviews_REST
                 return new WP_Error('missing_product_id', __('Product ID is required', 'trusthive-reviews'), ['status' => 400]);
             }
 
-            // Get approved reviews for the product
+            // Get shop ID from settings
+            $settings = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
+            $shop_id = isset($settings['shop_id']) ? $settings['shop_id'] : '';
+
+            if (empty($shop_id)) {
+                return new WP_Error('missing_config', __('Plugin not configured: set Shop ID.', 'trusthive-reviews'), ['status' => 400]);
+            }
+
+            // Get approved reviews for the product that belong to this shop
             $args = [
                 'post_id' => $product_id,
                 'type' => 'review',
                 'status' => 'approve',
-                'meta_key' => 'trusthive_rating',
+                'meta_query' => [
+                    [
+                        'key' => 'trusthive_shop_id',
+                        'value' => $shop_id,
+                        'compare' => '='
+                    ],
+                    [
+                        'key' => 'trusthive_rating',
+                        'compare' => 'EXISTS'
+                    ]
+                ],
                 'orderby' => 'comment_date',
                 'order' => 'DESC',
                 'number' => 50, // Limit to 50 reviews
