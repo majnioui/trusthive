@@ -18,21 +18,11 @@
     if (form.classList.contains('expanded')) {
       form.classList.remove('expanded');
       toggleBtn.classList.remove('expanded');
-      toggleBtn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-        </svg>
-        Write a review
-      `;
+      toggleBtn.textContent = 'Write a review';
     } else {
       form.classList.add('expanded');
       toggleBtn.classList.add('expanded');
-      toggleBtn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="currentColor">
-          <path d="M19 13H5v-2h14v2z"/>
-        </svg>
-        Cancel
-      `;
+      toggleBtn.textContent = 'Cancel';
     }
   }
 
