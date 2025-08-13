@@ -6,14 +6,21 @@ import { verifyOpaqueToken } from '../../../../lib/auth';
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const token = body.token || undefined;
-  if (!token) return NextResponse.json({ ok: false, error: 'missing' }, { status: 400 });
 
-  // Verify opaque token and map to shop
-  const shop = await verifyOpaqueToken(token);
-  if (!shop) return NextResponse.json({ ok: false, error: 'invalid or expired' }, { status: 401 });
+  if (!token) {
+    return NextResponse.json({ ok: false, error: 'missing' }, { status: 400 });
+  }
+
+  // Verify opaque token and map to shop - mark as used when establishing session
+  const shop = await verifyOpaqueToken(token, true);
+  if (!shop) {
+    return NextResponse.json({ ok: false, error: 'invalid or expired' }, { status: 401 });
+  }
 
   const shopEntry = await prisma.shop.findUnique({ where: { shopId: shop } });
-  if (!shopEntry || !shopEntry.apiKey) return NextResponse.json({ ok: false, error: 'unknown shop' }, { status: 404 });
+  if (!shopEntry || !shopEntry.apiKey) {
+    return NextResponse.json({ ok: false, error: 'unknown shop' }, { status: 404 });
+  }
 
   // create session payload
   const now = Math.floor(Date.now() / 1000);
@@ -25,7 +32,7 @@ export async function POST(req: Request) {
   const cookieVal = encodeURIComponent(`${payloadB64}.${sig}`);
 
   const res = NextResponse.json({ ok: true });
-  // set cookie
-  res.headers.set('Set-Cookie', `trusthive_sso=${cookieVal}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60*90}; Secure`);
+  // set cookie - remove Secure flag for development
+  res.headers.set('Set-Cookie', `trusthive_sso=${cookieVal}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60*90}`);
   return res;
 }

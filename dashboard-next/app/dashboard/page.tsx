@@ -3,43 +3,35 @@ import { verifyOpaqueToken, verifySessionCookie } from '../../lib/auth';
 import DashboardClientWrapper from './DashboardClientWrapper';
 import { headers } from 'next/headers';
 
-export default async function Page({ searchParams }: { searchParams?: Record<string,string> }) {
-  const sp = await (searchParams as any);
-  const token = sp?.token;
-
-  // Try token first (opaque token) if present in URL
+export default async function Page({ searchParams }: { searchParams?: Promise<Record<string,string>> }) {
+  // Check for token in URL first - await searchParams for Next.js 15
+  const params = await searchParams;
+  const token = params?.token;
   let shopId: string | null = null;
+  let authMethod = 'none';
+
   if (token) {
-    shopId = await verifyOpaqueToken(token);
+    shopId = await verifyOpaqueToken(token, false); // Don't mark as used during verification
+    if (shopId) {
+      authMethod = 'token';
+    }
   }
 
-  // If no token or invalid, try existing session cookie
+  // If no valid token, check for session cookie
   if (!shopId) {
     const headersList = await headers();
     const cookieHeader = headersList.get('cookie') || '';
     const fakeReq = { headers: { get: (_: string) => cookieHeader } } as unknown as Request;
     shopId = await verifySessionCookie(fakeReq);
+    if (shopId) {
+      authMethod = 'session';
+    }
   }
 
-  if (!shopId) {
-    return (
-      <div>
-        <h1>Unauthorized</h1>
-        <p>Invalid or expired token. Access denied.</p>
-      </div>
-    );
+  if (shopId) {
+    const reviews = await prisma.review.findMany({ where: { shopId }, orderBy: { createdAt: 'desc' } });
+    // serialize dates to string for client component
+    const serial = reviews.map(r => ({ ...r, createdAt: r.createdAt.toISOString() }));
+    return <DashboardClientWrapper initial={serial} shop={shopId} />;
   }
-
-  const reviews = await prisma.review.findMany({ where: { shopId }, orderBy: { createdAt: 'desc' } });
-
-  // serialize dates to string for client component
-  const serial = reviews.map(r => ({ ...r, createdAt: r.createdAt.toISOString() }));
-
-  return (
-    <div>
-      <h1>Dashboard</h1>
-      <p>Showing reviews for your shop.</p>
-      <DashboardClientWrapper initial={serial} token={token} shop={shopId} />
-    </div>
-  );
 }

@@ -37,7 +37,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   // Accept either opaque token verification OR a valid session cookie
   let shopId: string | null = null;
   if (token) {
-    shopId = await verifyOpaqueToken(token);
+    shopId = await verifyOpaqueToken(token, false); // Don't mark as used for API calls
   }
   if (!shopId) {
     const sessionShop = await verifySessionCookie(req as unknown as Request);

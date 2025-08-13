@@ -46,7 +46,6 @@ export async function cleanupAllOldTokens() {
         ]
       }
     });
-    console.log(`Cleaned up ${result.count} old tokens`);
     return result.count;
   } catch (error) {
     console.error('Error cleaning up all old tokens:', error);
@@ -55,7 +54,7 @@ export async function cleanupAllOldTokens() {
 }
 
 // Verify an opaque token and return the associated shopId, or null if invalid.
-export async function verifyOpaqueToken(token: string | undefined) {
+export async function verifyOpaqueToken(token: string | undefined, markUsed: boolean = false) {
   if (!token) return null;
   // Guard: if Prisma client was not regenerated after adding the AuthToken model
   // then `prisma.authToken` may be undefined which throws a TypeError.
@@ -69,8 +68,8 @@ export async function verifyOpaqueToken(token: string | undefined) {
   if (!rec) return null;
   if (rec.used) return null;
   if (rec.expiresAt.getTime() < Date.now()) return null;
-  // mark used if oneTime
-  if (rec.oneTime) {
+  // mark used if oneTime and markUsed is true
+  if (rec.oneTime && markUsed) {
     try { await prisma.authToken.update({ where: { tokenHash }, data: { used: true } }); } catch (e) { }
   }
   return rec.shopId;
