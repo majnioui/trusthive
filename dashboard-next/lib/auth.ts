@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import { prisma } from './prisma';
 
 // Legacy HMAC-based verification removed in favor of opaque tokens.
@@ -79,6 +80,20 @@ export async function verifyOpaqueToken(token: string | undefined, markUsed: boo
 // payload = JSON.stringify({ shop, exp }) where exp is unix timestamp
 export async function verifySessionCookie(req: Request) {
   const cookie = req.headers.get('cookie') || '';
+  // First support new dashboard JWT cookie issued after WP SSO flow
+  const authMatch = cookie.split(';').map(s => s.trim()).find(s => s.startsWith('auth-token='));
+  if (authMatch) {
+    const raw = decodeURIComponent(authMatch.split('=')[1]);
+    try {
+      const decoded: any = jwt.verify(raw, process.env.JWT_SECRET || 'dev-secret');
+      // Prefer `shopId` if present (auto-provisioned shops), otherwise fallback to site origin
+      return decoded.shopId || decoded.site || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Fallback to legacy trusthive_sso cookie verification
   const match = cookie.split(';').map(s => s.trim()).find(s => s.startsWith('trusthive_sso='));
   if (!match) return null;
   const raw = decodeURIComponent(match.split('=')[1]);

@@ -96,25 +96,11 @@ class TrustHive_Reviews_Admin
         }
 
         $settings = $this->get_settings();
-        $dashboard_link = '';
-        // Dashboard and API host are hardcoded to the configured site URL constant.
-        $dashboard = rtrim((defined('TRUSTHIVE_REVIEWS_SITE_URL') && TRUSTHIVE_REVIEWS_SITE_URL) ? TRUSTHIVE_REVIEWS_SITE_URL : 'https://fair-muskox-certainly.ngrok-free.app', '/');
-        // Build a short-lived HMAC token so the owner can open the external dashboard
-        // without re-authenticating. The external app should verify `shop`, `ts` and
-        // `token` using the shared `api_key` as secret.
-        $shop_value = $settings['shop_id'] ?: site_url();
-        $args = [ 'shop' => rawurlencode($shop_value) ];
-
-        if (!empty($settings['api_key'])) {
-            $ts = time();
-            $token_payload = $shop_value . '|' . $ts;
-            $token = hash_hmac('sha256', $token_payload, $settings['api_key']);
-            $args['ts'] = $ts;
-            $args['token'] = $token;
-        }
-
-        $dashboard_link = esc_url(add_query_arg($args, $dashboard . '/dashboard'));
-        $show_dashboard_button = !empty($dashboard_link);
+        // Show a simple "Open Dashboard" button that requests a short-lived,
+        // single-use opaque token from this site and redirects the admin to the
+        // external dashboard with that token. The dashboard will then POST the
+        // token back to this site to verify the user.
+        $show_dashboard_button = true;
 
         // Show admin notices: registration error transient or legacy query params
         $reg_err = get_transient('trusthive_register_error');
@@ -255,53 +241,38 @@ class TrustHive_Reviews_Admin
             wp_die(__('Invalid nonce', 'trusthive-reviews'));
         }
 
-        $settings = $this->get_settings();
-        $shop = $settings['shop_id'];
-        $api_key = $settings['api_key'];
-
-        if (empty($shop) || empty($api_key)) {
-            $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => 'missing_credentials'], admin_url('admin.php'));
-            wp_redirect($url);
-            exit;
+        // Generate a cryptographically secure, single-use token and store it transiently
+        if (function_exists('random_bytes')) {
+            try {
+                $token = bin2hex(random_bytes(32));
+            } catch (\Exception $e) {
+                $token = bin2hex(openssl_random_pseudo_bytes(32));
+            }
+        } elseif (function_exists('wp_generate_password')) {
+            $token = wp_generate_password(64, true, true);
+        } else {
+            $token = uniqid('th_', true);
         }
 
-        $dashboard = rtrim(defined('TRUSTHIVE_REVIEWS_SITE_URL') ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/');
+        $data = [
+            'user_id' => get_current_user_id(),
+            'email' => get_userdata(get_current_user_id())->user_email,
+            'created' => time(),
+        ];
+        // Store transient for 2 minutes (single-use)
+        set_transient('trusthive_dashboard_token_' . $token, $data, 120);
+
+        $site_url = get_site_url();
+        $dashboard = rtrim((defined('TRUSTHIVE_REVIEWS_SITE_URL') && TRUSTHIVE_REVIEWS_SITE_URL) ? TRUSTHIVE_REVIEWS_SITE_URL : '', '/');
         if (empty($dashboard)) {
             $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => 'missing_dashboard_url'], admin_url('admin.php'));
             wp_redirect($url);
             exit;
         }
 
-        // Call server-side generate-token endpoint
-        $resp = null;
-        if (function_exists('wp_remote_post')) {
-            $resp = wp_remote_post($dashboard . '/api/auth/generate-token', [
-                'headers' => [
-                    'Content-Type' => 'application/json',
-                    'Authorization' => 'Bearer ' . $api_key,
-                ],
-                'body' => wp_json_encode(['shop' => $shop]),
-                'timeout' => 15,
-            ]);
-        }
-
-        if ($resp && !is_wp_error($resp)) {
-            $code = wp_remote_retrieve_response_code($resp);
-            $body = wp_remote_retrieve_body($resp);
-            $json = json_decode($body, true);
-            if ($code === 200 && !empty($json['token'])) {
-                $token = $json['token'];
-                wp_redirect($dashboard . '/dashboard?token=' . rawurlencode($token));
-                exit;
-            }
-            $err = isset($json['error']) ? $json['error'] : 'unknown';
-            set_transient('trusthive_register_error', 'token_error: ' . $err, 60*5);
-        } else {
-            set_transient('trusthive_register_error', 'network_error', 60*5);
-        }
-
-        $url = add_query_arg(['page' => 'trusthive-reviews', 'provision_error' => '1'], admin_url('admin.php'));
-        wp_redirect($url);
+        // Redirect user to external dashboard SSO entrypoint with token and site
+        $redirect_url = $dashboard . '/auth/wp-login?token=' . rawurlencode($token) . '&site=' . rawurlencode($site_url);
+        wp_redirect($redirect_url);
         exit;
     }
 

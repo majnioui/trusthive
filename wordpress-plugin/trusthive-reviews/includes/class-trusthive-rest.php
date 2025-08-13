@@ -220,22 +220,6 @@ class TrustHive_Reviews_REST
             return new WP_Error('internal_error', __('Internal server error', 'trusthive-reviews'), ['status' => 500]);
         }
     }
-
-    private function verify_sso_token($shop, $ts, $token, $secret, $max_age = 300)
-    {
-        if (empty($secret) || empty($shop) || empty($ts) || empty($token)) {
-            return false;
-        }
-        if (abs(time() - intval($ts)) > $max_age) {
-            return false;
-        }
-        $expected = hash_hmac('sha256', $shop . '|' . $ts, $secret);
-        if (function_exists('hash_equals')) {
-            return hash_equals($expected, $token);
-        }
-        return $expected === $token;
-    }
-
     public function admin_list_reviews(WP_REST_Request $request)
     {
         $params = $request->get_query_params();
@@ -244,10 +228,18 @@ class TrustHive_Reviews_REST
         $token = isset($params['token']) ? $params['token'] : '';
 
         $settings = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
-        $secret = isset($settings['api_key']) ? $settings['api_key'] : '';
+        $api_key = isset($settings['api_key']) ? $settings['api_key'] : '';
 
-        if (!$this->verify_sso_token($shop, $ts, $token, $secret)) {
-            return new WP_Error('unauthorized', __('Invalid token', 'trusthive-reviews'), ['status' => 401]);
+        // Allow browser admins; otherwise require a Bearer token matching the stored api_key and matching shop id
+        if (!current_user_can('manage_options')) {
+            $auth = isset($_SERVER['HTTP_AUTHORIZATION']) ? $_SERVER['HTTP_AUTHORIZATION'] : (isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION']) ? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] : '');
+            if (!preg_match('/Bearer\s+(.+)/', $auth, $m)) {
+                return new WP_Error('unauthorized', __('Missing authorization', 'trusthive-reviews'), ['status' => 401]);
+            }
+            $provided = $m[1];
+            if (empty($api_key) || $provided !== $api_key || $shop !== (isset($settings['shop_id']) ? $settings['shop_id'] : '')) {
+                return new WP_Error('unauthorized', __('Invalid credentials', 'trusthive-reviews'), ['status' => 401]);
+            }
         }
 
         $cq = new WP_Comment_Query();
@@ -288,11 +280,19 @@ class TrustHive_Reviews_REST
         $token = isset($params['token']) ? $params['token'] : (isset($body['token']) ? $body['token'] : '');
 
         $settings = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
-        $secret = isset($settings['api_key']) ? $settings['api_key'] : '';
-        if (!$this->verify_sso_token($shop, $ts, $token, $secret)) {
-            return new WP_Error('unauthorized', __('Invalid token', 'trusthive-reviews'), ['status' => 401]);
+        $api_key = isset($settings['api_key']) ? $settings['api_key'] : '';
+        // Allow browser admins; otherwise require a Bearer token matching the stored api_key and matching shop id
+        if (!current_user_can('manage_options')) {
+            $auth = isset($_SERVER['HTTP_AUTHORIZATION']) ? $_SERVER['HTTP_AUTHORIZATION'] : (isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION']) ? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] : '');
+            if (!preg_match('/Bearer\s+(.+)/', $auth, $m)) {
+                return new WP_Error('unauthorized', __('Missing authorization', 'trusthive-reviews'), ['status' => 401]);
+            }
+            $provided = $m[1];
+            if (empty($api_key) || $provided !== $api_key || $shop !== (isset($settings['shop_id']) ? $settings['shop_id'] : '')) {
+                return new WP_Error('unauthorized', __('Invalid credentials', 'trusthive-reviews'), ['status' => 401]);
+            }
         }
-
+        
         if ($action === 'approve') {
             wp_set_comment_status($id, 1);
             return rest_ensure_response([ 'ok' => true ]);
@@ -307,4 +307,120 @@ class TrustHive_Reviews_REST
         return new WP_Error('invalid_action', __('Unknown action', 'trusthive-reviews'), ['status' => 400]);
     }
 
+}
+
+// Register a lightweight verification endpoint and handler outside the class.
+add_action('rest_api_init', function () {
+    register_rest_route('trusthive-reviews/v1', '/verify', [
+        'methods' => 'POST',
+        'callback' => 'trusthive_verify_dashboard_token',
+        'permission_callback' => '__return_true',
+    ]);
+    register_rest_route('trusthive-reviews/v1', '/provision', [
+        'methods' => 'POST',
+        'callback' => 'trusthive_store_credentials',
+        'permission_callback' => '__return_true',
+    ]);
+});
+
+function trusthive_verify_dashboard_token(WP_REST_Request $request) {
+    $params = $request->get_json_params();
+    $token = isset($params['token']) ? $params['token'] : '';
+    if (!is_string($token) || empty($token)) {
+        return new WP_Error('missing_token', __('Missing token', 'trusthive-reviews'), ['status' => 400]);
+    }
+
+    $ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'unknown';
+    // simple rate limiting per IP: 10 requests per 2 minutes
+    $rl_key = 'trusthive_rate_' . $ip;
+    $rl = get_transient($rl_key);
+    if ($rl) {
+        $rl = json_decode($rl, true);
+        if (is_array($rl) && isset($rl['count']) && isset($rl['first'])) {
+            if (time() - intval($rl['first']) <= 120) {
+                if (intval($rl['count']) >= 10) {
+                    return new WP_Error('rate_limited', __('Too many requests', 'trusthive-reviews'), ['status' => 429]);
+                }
+                $rl['count'] = intval($rl['count']) + 1;
+            } else {
+                $rl = ['count' => 1, 'first' => time()];
+            }
+        } else {
+            $rl = ['count' => 1, 'first' => time()];
+        }
+    } else {
+        $rl = ['count' => 1, 'first' => time()];
+    }
+    set_transient($rl_key, json_encode($rl), 120);
+
+    $key = 'trusthive_dashboard_token_' . $token;
+    $data = get_transient($key);
+    if (empty($data) || !is_array($data) || empty($data['user_id'])) {
+        return new WP_Error('invalid_or_expired', __('Invalid or expired token', 'trusthive-reviews'), ['status' => 401]);
+    }
+
+    // Do NOT delete the transient here; provisioning endpoint will delete it after storing credentials
+
+    $user = get_userdata(intval($data['user_id']));
+    if (!$user) {
+        return new WP_Error('user_not_found', __('User not found', 'trusthive-reviews'), ['status' => 404]);
+    }
+
+    return rest_ensure_response([
+        'success' => true,
+        'user_id' => intval($user->ID),
+        'email' => $user->user_email,
+        'display_name' => $user->display_name,
+    ]);
+}
+
+function trusthive_store_credentials(WP_REST_Request $request) {
+    $params = $request->get_json_params();
+    $token = isset($params['token']) ? $params['token'] : '';
+    $shop_id = isset($params['shop_id']) ? $params['shop_id'] : '';
+    $api_key = isset($params['api_key']) ? $params['api_key'] : '';
+
+    if (!is_string($token) || empty($token) || !is_string($shop_id) || empty($shop_id) || !is_string($api_key) || empty($api_key)) {
+        return new WP_Error('missing_params', __('Missing parameters', 'trusthive-reviews'), ['status' => 400]);
+    }
+
+    $ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'unknown';
+    $rl_key = 'trusthive_rate_' . $ip;
+    $rl = get_transient($rl_key);
+    if ($rl) {
+        $rl = json_decode($rl, true);
+        if (is_array($rl) && isset($rl['count']) && isset($rl['first'])) {
+            if (time() - intval($rl['first']) <= 60) {
+                if (intval($rl['count']) >= 6) {
+                    return new WP_Error('rate_limited', __('Too many requests', 'trusthive-reviews'), ['status' => 429]);
+                }
+                $rl['count'] = intval($rl['count']) + 1;
+            } else {
+                $rl = ['count' => 1, 'first' => time()];
+            }
+        } else {
+            $rl = ['count' => 1, 'first' => time()];
+        }
+    } else {
+        $rl = ['count' => 1, 'first' => time()];
+    }
+    set_transient($rl_key, json_encode($rl), 60);
+
+    $key = 'trusthive_dashboard_token_' . $token;
+    $data = get_transient($key);
+    if (empty($data) || !is_array($data) || empty($data['user_id'])) {
+        return new WP_Error('invalid_or_expired', __('Invalid or expired token', 'trusthive-reviews'), ['status' => 401]);
+    }
+
+    // store credentials in options
+    $existing = get_option(TrustHive_Reviews_Admin::OPTION_NAME, []);
+    if (!is_array($existing)) $existing = [];
+    $existing['shop_id'] = sanitize_text_field($shop_id);
+    $existing['api_key'] = sanitize_text_field($api_key);
+    update_option(TrustHive_Reviews_Admin::OPTION_NAME, $existing);
+
+    // delete transient to make token single-use
+    delete_transient($key);
+
+    return rest_ensure_response([ 'success' => true, 'shop_id' => $existing['shop_id'] ]);
 }
